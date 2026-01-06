@@ -33,7 +33,7 @@ The plugin includes a ready-to-use ZATA preset.
 Default values:
 - Endpoint: `https://idr01.zata.ai`
 - Region: `CentralIndia`
-- Path-style addressing: Enabled
+- Path-style addressing: `Enabled`
 - Key prefix: `wp-backups`
 
 ### You only need to add:
@@ -118,6 +118,7 @@ See the `LICENSE` file for full license text.
 ## Disclaimer
 This software is provided **"as is"**, without warranty of any kind.  
 Use at your own risk.
+
 
 
 
