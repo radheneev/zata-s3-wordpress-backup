@@ -1,4 +1,4 @@
-\# ZATA S3 WordPress Backup (Open Source)
+# ZATA S3 WordPress Backup (Open Source)
 
 
 
@@ -14,41 +14,35 @@ The plugin is designed to be \*\*simple, transparent, and professional\*\*, with
 
 
 
-\## Features
+## Features
 
 
 
-\- Separate ZIP backups:
+- Separate ZIP backups:
 
-&nbsp; - Database (`database.sql` inside ZIP)
+- Database (`database.sql` inside ZIP)
 
-&nbsp; - Themes (`wp-content/themes`)
+- Themes (`wp-content/themes`)
 
-&nbsp; - Plugins (`wp-content/plugins`)
+- Plugins (`wp-content/plugins`)
 
-\- Upload to \*\*ZATA S3\*\* (Central India preset included)
+- Upload to \*\*ZATA S3\*\* (Central India preset included)
 
-\- Works with \*\*S3-compatible storage\*\*
+- Works with \*\*S3-compatible storage\*\*
 
-&nbsp; - ZATA
+- ZATA
+  
+- Built-in scheduling (WP-Cron)
 
-&nbsp; - MinIO
+- Manual “Run Backup Now”
 
-&nbsp; - Ceph RGW
+- Email notifications (failure / optional success)
 
-&nbsp; - AWS S3
+- Logs \& backup history
 
-\- Built-in scheduling (WP-Cron)
+- Admin-only access with WordPress nonces
 
-\- Manual “Run Backup Now”
-
-\- Email notifications (failure / optional success)
-
-\- Logs \& backup history
-
-\- Admin-only access with WordPress nonces
-
-\- No external SDK dependencies
+- No external SDK dependencies
 
 
 
@@ -56,23 +50,21 @@ The plugin is designed to be \*\*simple, transparent, and professional\*\*, with
 
 
 
-\## Installation
+## Installation
 
 
 
-1\. Download or clone this repository.
+1. Download or clone this repository.
 
-2\. Upload the plugin folder: wp-s3-backup/ to: wp-content/plugins/
+2. Upload the plugin folder: wp-s3-backup/ to: wp-content/plugins/
 
+3. Activate \*\*ZATA S3 WordPress Backup\*\* from:
 
+\*\*WordPress Admin → Plugins\*\*
 
-3\. Activate \*\*ZATA S3 WordPress Backup\*\* from:
+4. Open:
 
-&nbsp;  \*\*WordPress Admin → Plugins\*\*
-
-4\. Open:
-
-&nbsp;  \*\*ZATA S3 Backup\*\* from the admin sidebar.
+\*\*ZATA S3 Backup\*\* from the admin sidebar.
 
 
 
@@ -80,7 +72,7 @@ The plugin is designed to be \*\*simple, transparent, and professional\*\*, with
 
 
 
-\## ZATA Preset (Default)
+## ZATA Preset (Default)
 
 
 
@@ -92,23 +84,23 @@ Default values:
 
 
 
-\- Endpoint: `https://idr01.zata.ai`
+- Endpoint: `https://idr01.zata.ai`
 
-\- Region: `CentralIndia`
+- Region: `CentralIndia`
 
-\- Path-style addressing: Enabled
+- Path-style addressing: Enabled
 
-\- Key prefix: `wp-backups`
+- Key prefix: `wp-backups`
 
 
 
 You only need to add:
 
-\- Bucket name
+- Bucket name
 
-\- Access Key
+- Access Key
 
-\- Secret Key
+- Secret Key
 
 
 
@@ -116,7 +108,7 @@ You only need to add:
 
 
 
-\## Where to add Access Key \& Secret Key
+## Where to add Access Key \& Secret Key
 
 
 
@@ -126,9 +118,9 @@ Go to: ZATA S3 Backup → Settings → S3 / Object Storage
 
 Fields:
 
-\- Access Key
+- Access Key
 
-\- Secret Key
+- Secret Key
 
 
 
@@ -140,7 +132,7 @@ Fields:
 
 
 
-\## Backup Output Structure
+## Backup Output Structure
 
 
 
@@ -172,49 +164,23 @@ wp-content/uploads/wps3b-backups/
 
 
 
-\## Restore Process (Manual)
+## Restore Process (Manual)
 
 
 
-1\. Download required ZIP files from S3.
+1. Download required ZIP files from S3.
 
-2\. Restore files:
+2. Restore files:
 
-&nbsp;  - Extract `themes.zip` → `wp-content/themes/`
+- Extract `themes.zip` → `wp-content/themes/`
 
-&nbsp;  - Extract `plugins.zip` → `wp-content/plugins/`
+- Extract `plugins.zip` → `wp-content/plugins/`
 
-3\. Restore database:
+3. Restore database:
 
-&nbsp;  - Extract `database.sql`
+- Extract `database.sql`
 
-&nbsp;  - Import into MySQL using phpMyAdmin or CLI
-
-
-
----
-
-
-
-\## Logs \& History
-
-
-
-\- View recent backup runs under: ZATA S3 Backup → Logs
-
-
-
-\- Includes:
-
-\- Timestamp
-
-\- Status (SUCCESS / FAILED)
-
-\- Duration
-
-\- Uploaded objects
-
-\- Download or clear logs from the UI
+- Import into MySQL using phpMyAdmin or CLI
 
 
 
@@ -222,23 +188,49 @@ wp-content/uploads/wps3b-backups/
 
 
 
-\## Scheduling
+## Logs \& History
+
+
+
+- View recent backup runs under: ZATA S3 Backup → Logs
+
+
+
+- Includes:
+
+- Timestamp
+
+- Status (SUCCESS / FAILED)
+
+- Duration
+
+- Uploaded objects
+
+- Download or clear logs from the UI
+
+
+
+---
+
+
+
+## Scheduling
 
 
 
 Supported schedules:
 
-\- Disabled
+- Disabled
 
-\- Hourly
+- Hourly
 
-\- Twice Daily
+- Twice Daily
 
-\- Daily
+- Daily
 
-\- Weekly
+- Weekly
 
-\- Custom interval (minutes)
+- Custom interval (minutes)
 
 
 
@@ -252,33 +244,33 @@ Supported schedules:
 
 
 
-\## Security Notes
+## Security Notes
 
 
 
-\- Admin-only access (`manage\_options`)
+- Admin-only access (`manage\_options`)
 
-\- WordPress nonces for all actions
+- WordPress nonces for all actions
 
-\- Backup directory protected with:
+- Backup directory protected with:
 
-\- `index.php`
+- `index.php`
 
-\- `.htaccess`
+- `.htaccess`
 
-\- No public endpoints
+- No public endpoints
 
-\- Secrets are never logged
+- Secrets are never logged
 
 
 
-\### Recommended Hardening
+### Recommended Hardening
 
-\- Store credentials in `wp-config.php` (future enhancement)
+- Store credentials in `wp-config.php` (future enhancement)
 
-\- Restrict bucket permissions
+- Restrict bucket permissions
 
-\- Disable insecure TLS unless required
+- Disable insecure TLS unless required
 
 
 
@@ -286,7 +278,7 @@ Supported schedules:
 
 
 
-\## License
+## License
 
 
 
@@ -306,7 +298,7 @@ See the `LICENSE` file for full license text.
 
 
 
-\## Contributing
+## Contributing
 
 
 
@@ -316,11 +308,11 @@ Pull requests and issues are welcome.
 
 If you:
 
-\- add streaming uploads
+- add streaming uploads
 
-\- add restore automation
+- add restore automation
 
-\- add encryption-at-rest
+- add encryption-at-rest
 
 
 
@@ -332,13 +324,14 @@ please open a PR.
 
 
 
-\## Disclaimer
+## Disclaimer
 
 
 
 This software is provided \*\*“as is”\*\*, without warranty of any kind.  
 
 Use at your own risk.
+
 
 
 
