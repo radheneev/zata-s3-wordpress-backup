@@ -425,12 +425,22 @@ function wps3b_s3_put_object(string $file_path, string $object_key, array $s): a
   if (!file_exists($file_path)) return ['ok' => false, 'message' => "File not found: {$file_path}"];
   if (!function_exists('curl_init')) return ['ok' => false, 'message' => 'cURL extension is required'];
 
-  $endpoint = rtrim($s['endpoint'], '/');
+  $endpoint_raw = isset($s['endpoint']) ? rtrim($s['endpoint'], '/') : '';
+  $scheme_pref = !empty($s['scheme']) ? strtolower($s['scheme']) : 'https';
+  if (!in_array($scheme_pref, ['http','https'], true)) $scheme_pref = 'https';
+
+  // Accept endpoint in two forms:
+  // 1) host[:port] (recommended in UI)
+  // 2) full URL with scheme
+  $endpoint = (strpos($endpoint_raw, '://') === false) ? ($scheme_pref . '://' . $endpoint_raw) : $endpoint_raw;
+
   $bucket   = $s['bucket'];
-  $region   = $s['region'];
+  $region   = isset($s['region']) ? trim($s['region']) : '';
+  if ($region === '') $region = 'us-east-1';
   $ak       = $s['access_key'];
   $sk       = $s['secret_key'];
   $use_path_style = !empty($s['path_style']);
+  $already_redirected = !empty($s['_redirected']);
 
   $host_base = parse_url($endpoint, PHP_URL_HOST);
   $scheme = parse_url($endpoint, PHP_URL_SCHEME) ?: 'https';
@@ -513,6 +523,36 @@ function wps3b_s3_put_object(string $file_path, string $object_key, array $s): a
   curl_close($ch);
 
   if ($resp === false) return ['ok' => false, 'message' => "cURL error: {$err}"];
+
+  // Handle common redirects (e.g., http -> https) by retrying once using the Location header
+  if (!$already_redirected && in_array($code, [301,302,307,308], true)) {
+    $header_size = 0;
+    $headers_out = [];
+    // Try to parse response headers from the raw response (CURLOPT_HEADER = true)
+    // Header size is not available after curl_close, so we parse manually.
+    $parts = preg_split("/\r\n\r\n/", $resp);
+    $raw_headers = $parts[0] ?? '';
+    foreach (explode("\r\n", $raw_headers) as $line) {
+      if (strpos($line, ':') !== false) {
+        [$k,$v] = array_map('trim', explode(':', $line, 2));
+        $headers_out[strtolower($k)] = $v;
+      }
+    }
+    $location = $headers_out['location'] ?? '';
+    if ($location) {
+      $loc_scheme = parse_url($location, PHP_URL_SCHEME);
+      $loc_host   = parse_url($location, PHP_URL_HOST);
+      if ($loc_scheme && $loc_host) {
+        // Retry with redirected base (keep same object key & path style)
+        $s2 = $s;
+        $s2['_redirected'] = 1;
+        $s2['scheme'] = $loc_scheme;
+        $s2['endpoint'] = $loc_host;
+        return wps3b_s3_put_object($file_path, $object_key, $s2);
+      }
+    }
+  }
+
   if ($code < 200 || $code >= 300) return ['ok' => false, 'message' => "Upload failed HTTP {$code}"];
 
   return ['ok' => true, 'message' => 'Uploaded'];

@@ -4,8 +4,9 @@ if (!defined('ABSPATH')) exit;
 function wps3b_default_settings(): array {
   return [
     'provider' => 'zata',
-    'endpoint' => 'https://idr01.zata.ai',
-    'region' => 'CentralIndia',
+    'endpoint' => 'idr01.zata.ai',
+    'scheme' => 'https',
+    'region' => '',
     'bucket' => '',
     'access_key' => '',
     'secret_key' => '',
@@ -62,8 +63,9 @@ add_action('admin_enqueue_scripts', function ($hook) {
 
   wp_localize_script('wps3b-admin', 'WPS3B_PRESETS', [
     'zata' => [
-      'endpoint' => 'https://idr01.zata.ai',
-      'region' => 'CentralIndia',
+      'endpoint' => 'idr01.zata.ai',
+    'scheme' => 'https',
+      'region' => '',
       'prefix' => 'wp-backups',
       'path_style' => true,
     ],
@@ -122,7 +124,15 @@ function wps3b_sanitize_settings($in) {
 
   $out['provider']     = isset($in['provider']) ? sanitize_text_field($in['provider']) : $defaults['provider'];
 
-  $out['endpoint']     = isset($in['endpoint']) ? esc_url_raw(trim($in['endpoint'])) : $defaults['endpoint'];
+  $endpoint_in = isset($in['endpoint']) ? trim($in['endpoint']) : $defaults['endpoint'];
+  // Allow users to enter endpoint without http/https; store host[:port] only
+  $endpoint_in = preg_replace('#^https?://#i', '', $endpoint_in);
+  $endpoint_in = rtrim($endpoint_in, '/');
+  $out['endpoint'] = sanitize_text_field($endpoint_in);
+
+  // Protocol for endpoint (useful for non-TLS MinIO/RGW). Default https.
+  $scheme_in = isset($in['scheme']) ? strtolower(trim($in['scheme'])) : $defaults['scheme'];
+  $out['scheme'] = in_array($scheme_in, ['http','https'], true) ? $scheme_in : $defaults['scheme'];
   $out['region']       = isset($in['region']) ? sanitize_text_field(trim($in['region'])) : $defaults['region'];
   $out['bucket']       = isset($in['bucket']) ? sanitize_text_field(trim($in['bucket'])) : '';
   $out['access_key']   = isset($in['access_key']) ? sanitize_text_field(trim($in['access_key'])) : '';
@@ -317,7 +327,17 @@ function wps3b_render_settings_page() {
               </td>
             </tr>
             <tr>
-              <th>Region <?php echo wps3b_info_icon('For ZATA use CentralIndia. For AWS use region like ap-south-1.'); ?></th>
+              <th>Protocol <?php echo wps3b_info_icon('Usually HTTPS. Use HTTP only if your MinIO/RGW endpoint is not using TLS.'); ?></th>
+              <td>
+                <select name="<?php echo esc_attr(WPS3B_OPT); ?>[scheme]">
+                  <option value="https" <?php selected(($opt['scheme'] ?? 'https'), 'https'); ?>>https</option>
+                  <option value="http" <?php selected(($opt['scheme'] ?? 'https'), 'http'); ?>>http</option>
+                </select>
+              </td>
+            </tr>
+
+            <tr>
+              <th>Region <?php echo wps3b_info_icon('Optional for ZATA / most S3-compatible endpoints. Required for AWS (e.g., ap-south-1). If empty, plugin will sign with us-east-1.'); ?></th>
               <td>
                 <input type="text" class="regular-text" id="wps3b_region"
                   name="<?php echo esc_attr(WPS3B_OPT); ?>[region]"
