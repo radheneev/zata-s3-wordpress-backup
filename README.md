@@ -1,6 +1,7 @@
 ![GitHub stars](https://img.shields.io/github/stars/radheneev/zata-s3-wordpress-backup?style=social)
 ![GitHub forks](https://img.shields.io/github/forks/radheneev/zata-s3-wordpress-backup?style=social)
 ![License](https://img.shields.io/github/license/radheneev/zata-s3-wordpress-backup)
+![WordPress](https://img.shields.io/badge/WordPress-5.8%2B-blue)
 
 # ZATA S3 WordPress Backup (Open Source)
 ZATA S3 WordPress Backup is an open-source WordPress plugin that backs up your \*\*Database, Themes, and Plugins\*\* as \*\*separate ZIP files\*\* and uploads them to \*\*ZATA S3\*\* or any \*\*S3-compatible object storage\*\*.
@@ -332,6 +333,7 @@ please open a PR.
 This software is provided \*\*“as is”\*\*, without warranty of any kind.  
 
 Use at your own risk.
+
 
 
 
