@@ -1,2 +1,350 @@
-# zata-s3-wordpress-backup
-Backup WordPress database, themes, and plugins as separate ZIP files and upload them to ZATA S3 or any S3-compatible object storage. Includes scheduling, logs, and email notifications.
+\# ZATA S3 WordPress Backup (Open Source)
+
+
+
+ZATA S3 WordPress Backup is an open-source WordPress plugin that backs up your \*\*Database, Themes, and Plugins\*\* as \*\*separate ZIP files\*\* and uploads them to \*\*ZATA S3\*\* or any \*\*S3-compatible object storage\*\*.
+
+
+
+The plugin is designed to be \*\*simple, transparent, and professional\*\*, with logs, scheduling, and email notifications.
+
+
+
+---
+
+
+
+\## Features
+
+
+
+\- Separate ZIP backups:
+
+&nbsp; - Database (`database.sql` inside ZIP)
+
+&nbsp; - Themes (`wp-content/themes`)
+
+&nbsp; - Plugins (`wp-content/plugins`)
+
+\- Upload to \*\*ZATA S3\*\* (Central India preset included)
+
+\- Works with \*\*S3-compatible storage\*\*
+
+&nbsp; - ZATA
+
+&nbsp; - MinIO
+
+&nbsp; - Ceph RGW
+
+&nbsp; - AWS S3
+
+\- Built-in scheduling (WP-Cron)
+
+\- Manual “Run Backup Now”
+
+\- Email notifications (failure / optional success)
+
+\- Logs \& backup history
+
+\- Admin-only access with WordPress nonces
+
+\- No external SDK dependencies
+
+
+
+---
+
+
+
+\## Installation
+
+
+
+1\. Download or clone this repository.
+
+2\. Upload the plugin folder: wp-s3-backup/ to: wp-content/plugins/
+
+
+
+3\. Activate \*\*ZATA S3 WordPress Backup\*\* from:
+
+&nbsp;  \*\*WordPress Admin → Plugins\*\*
+
+4\. Open:
+
+&nbsp;  \*\*ZATA S3 Backup\*\* from the admin sidebar.
+
+
+
+---
+
+
+
+\## ZATA Preset (Default)
+
+
+
+The plugin includes a ready-to-use ZATA preset.
+
+
+
+Default values:
+
+
+
+\- Endpoint: `https://idr01.zata.ai`
+
+\- Region: `CentralIndia`
+
+\- Path-style addressing: Enabled
+
+\- Key prefix: `wp-backups`
+
+
+
+You only need to add:
+
+\- Bucket name
+
+\- Access Key
+
+\- Secret Key
+
+
+
+---
+
+
+
+\## Where to add Access Key \& Secret Key
+
+
+
+Go to: ZATA S3 Backup → Settings → S3 / Object Storage
+
+
+
+Fields:
+
+\- Access Key
+
+\- Secret Key
+
+
+
+> Recommendation: Use credentials limited to the backup bucket only.
+
+
+
+---
+
+
+
+\## Backup Output Structure
+
+
+
+Backups are uploaded as:
+
+
+
+s3://<bucket>/<prefix>/db/<site>-db-YYYYMMDD-HHMMSS.zip
+
+s3://<bucket>/<prefix>/themes/<site>-themes-YYYYMMDD-HHMMSS.zip
+
+s3://<bucket>/<prefix>/plugins/<site>-plugins-YYYYMMDD-HHMMSS.zip
+
+
+
+
+
+Local copies (optional) are stored in:
+
+
+
+wp-content/uploads/wps3b-backups/
+
+
+
+
+
+---
+
+
+
+\## Restore Process (Manual)
+
+
+
+1\. Download required ZIP files from S3.
+
+2\. Restore files:
+
+&nbsp;  - Extract `themes.zip` → `wp-content/themes/`
+
+&nbsp;  - Extract `plugins.zip` → `wp-content/plugins/`
+
+3\. Restore database:
+
+&nbsp;  - Extract `database.sql`
+
+&nbsp;  - Import into MySQL using phpMyAdmin or CLI
+
+
+
+---
+
+
+
+\## Logs \& History
+
+
+
+\- View recent backup runs under: ZATA S3 Backup → Logs
+
+
+
+\- Includes:
+
+\- Timestamp
+
+\- Status (SUCCESS / FAILED)
+
+\- Duration
+
+\- Uploaded objects
+
+\- Download or clear logs from the UI
+
+
+
+---
+
+
+
+\## Scheduling
+
+
+
+Supported schedules:
+
+\- Disabled
+
+\- Hourly
+
+\- Twice Daily
+
+\- Daily
+
+\- Weekly
+
+\- Custom interval (minutes)
+
+
+
+> WordPress uses WP-Cron.  
+
+> For accurate timing, trigger `wp-cron.php` using a system cron job.
+
+
+
+---
+
+
+
+\## Security Notes
+
+
+
+\- Admin-only access (`manage\_options`)
+
+\- WordPress nonces for all actions
+
+\- Backup directory protected with:
+
+\- `index.php`
+
+\- `.htaccess`
+
+\- No public endpoints
+
+\- Secrets are never logged
+
+
+
+\### Recommended Hardening
+
+\- Store credentials in `wp-config.php` (future enhancement)
+
+\- Restrict bucket permissions
+
+\- Disable insecure TLS unless required
+
+
+
+---
+
+
+
+\## License
+
+
+
+MIT License
+
+
+
+Copyright (c) 2026 radheneev
+
+
+
+See the `LICENSE` file for full license text.
+
+
+
+---
+
+
+
+\## Contributing
+
+
+
+Pull requests and issues are welcome.
+
+
+
+If you:
+
+\- add streaming uploads
+
+\- add restore automation
+
+\- add encryption-at-rest
+
+
+
+please open a PR.
+
+
+
+---
+
+
+
+\## Disclaimer
+
+
+
+This software is provided \*\*“as is”\*\*, without warranty of any kind.  
+
+Use at your own risk.
+
+
+
+
+
+
+
+
+
