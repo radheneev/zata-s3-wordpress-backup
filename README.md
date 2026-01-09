@@ -119,6 +119,17 @@ See the `LICENSE` file for full license text.
 This software is provided **"as is"**, without warranty of any kind.  
 Use at your own risk.
 
+## Screenshots
+### 1) S3 / ZATA Settings
+![S3 Settings](assets/screenshot/s3-1.png)
+### 2) Schedule Setup
+![Schedule](assets/screenshot/s3-2.png)
+### 3) Notifications
+![Notifications](assets/screenshot/s3-3.png)
+### 4) Backup Run / Logs
+![Backup Run](assets/screenshot/s3-4.png)
+
+
 
 
 
