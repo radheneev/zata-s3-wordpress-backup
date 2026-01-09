@@ -368,19 +368,33 @@ function zata_wps3b_render_page() {
             'backup_time'     => sanitize_text_field($_POST['backup_time'] ?? '02:00'),
             'keep_local'      => max(0, (int) ($_POST['keep_local'] ?? 3)),
             'last_backup'     => $s['last_backup'] ?? 0, // Preserve last backup time
-            'notify_enabled'  => isset($_POST['notify_enabled']) ? 1 : 0,
-            'notify_on'       => sanitize_text_field($_POST['notify_on'] ?? 'both'),
-            'notify_email'    => sanitize_email($_POST['notify_email'] ?? get_option('admin_email')),
+            
+            // Notification settings - match form field names
+            'notify_enabled'    => isset($_POST['notify_enabled']) ? 1 : 0,
+            'notify_email'      => sanitize_email($_POST['notify_email'] ?? ''),
+            'notify_on_success' => isset($_POST['notify_on_success']) ? 1 : 0,
+            'notify_on_failure' => isset($_POST['notify_on_failure']) ? 1 : 0,
         ];
 
         update_option(ZATA_WPS3B_OPT, $new_settings, false);
         zata_wps3b_apply_schedule();
 
         $notice = 'Settings saved successfully!';
+        
+        // Show notification status if enabled
+        if ($new_settings['notify_enabled']) {
+            $notify_types = [];
+            if ($new_settings['notify_on_success']) $notify_types[] = 'Success';
+            if ($new_settings['notify_on_failure']) $notify_types[] = 'Failure';
+            if (!empty($notify_types)) {
+                $notice .= ' | Email notifications: ' . implode(' & ', $notify_types);
+            }
+        }
+        
         if ($new_settings['schedule'] === 'daily') {
             $next = zata_wps3b_get_next_scheduled();
             if ($next) {
-                $notice .= ' Next backup: ' . date('Y-m-d H:i:s', $next);
+                $notice .= ' | Next backup: ' . date('Y-m-d H:i:s', $next);
             }
         }
         $notice_type = 'success';
@@ -417,28 +431,6 @@ function zata_wps3b_render_page() {
         zata_wps3b_run_backup('manual');
         $notice = 'Backup completed! Check the logs below for details.';
         $notice_type = 'success';
-    }
-
-    // 4) Send test email
-    if (isset($_POST['zata_wps3b_test_email']) && check_admin_referer('zata_wps3b_test_email', 'zata_wps3b_test_email_nonce')) {
-        $test_email = !empty($s['notify_email']) ? $s['notify_email'] : get_option('admin_email');
-        $subject = '[' . get_bloginfo('name') . '] Test Email - ZATA S3 Backup';
-        $message = "This is a test email from ZATA S3 Backup plugin.\n\n";
-        $message .= "Site: " . home_url() . "\n";
-        $message .= "Time: " . current_time('Y-m-d H:i:s') . "\n\n";
-        $message .= "If you receive this email, your notification settings are working correctly!\n\n";
-        $message .= "---\n";
-        $message .= "Plugin URL: " . admin_url('admin.php?page=zata-wps3b') . "\n";
-        
-        $headers = ['Content-Type: text/plain; charset=UTF-8'];
-        
-        if (wp_mail($test_email, $subject, $message, $headers)) {
-            $notice = 'Test email sent successfully to ' . $test_email . '! Check your inbox.';
-            $notice_type = 'success';
-        } else {
-            $notice = 'Failed to send test email. Please check your WordPress email configuration.';
-            $notice_type = 'error';
-        }
     }
 
     // Get current settings
@@ -668,11 +660,11 @@ function zata_wps3b_render_page() {
                                 <td>
                                     <div style="display:flex;flex-direction:column;gap:8px;">
                                         <label>
-                                            <input type="checkbox" name="notify_on_success" <?php checked(!empty($s['notify_on_success'])); ?>>
+                                            <input type="checkbox" name="notify_on_success" <?php checked(!empty($s['notify_on_success']) || !isset($s['notify_on_success'])); ?>>
                                             Backup succeeds ✓
                                         </label>
                                         <label>
-                                            <input type="checkbox" name="notify_on_failure" <?php checked(!empty($s['notify_on_failure'])); ?>>
+                                            <input type="checkbox" name="notify_on_failure" <?php checked(!empty($s['notify_on_failure']) || !isset($s['notify_on_failure'])); ?>>
                                             Backup fails ✖
                                         </label>
                                     </div>
