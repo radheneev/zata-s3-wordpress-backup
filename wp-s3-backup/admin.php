@@ -1,527 +1,791 @@
 <?php
 if (!defined('ABSPATH')) exit;
 
-function wps3b_default_settings(): array {
-  return [
-    'provider' => 'zata',
-    'endpoint' => 'idr01.zata.ai',
-    'scheme' => 'https',
-    'region' => '',
-    'bucket' => '',
-    'access_key' => '',
-    'secret_key' => '',
-    'key_prefix' => 'wp-backups',
-    'path_style' => 1,
-    'insecure_tls' => 0,
-
-    'include_db' => 1,
-    'include_themes' => 1,
-    'include_plugins' => 1,
-    'keep_local' => 3,
-
-    'schedule' => 'daily',
-    'custom_minutes' => 60,
-
-    'notify_enabled' => 0,
-    'notify_on_success' => 0,
-    'notify_email' => get_option('admin_email'),
-  ];
-}
-
-/**
- * Admin menu (Dashicon for sidebar)
- */
+/* ---------------------------
+ * Admin menu
+ * --------------------------- */
 add_action('admin_menu', function () {
-  add_menu_page(
-    'ZATA S3 WordPress Backup',
-    'ZATA S3 Backup',
-    'manage_options',
-    WPS3B_SLUG,
-    'wps3b_render_settings_page',
-    'dashicons-cloud-upload',
-    58
-  );
-
-  add_submenu_page(
-    WPS3B_SLUG,
-    'Settings',
-    'Settings',
-    'manage_options',
-    WPS3B_SLUG,
-    'wps3b_render_settings_page'
-  );
+    add_menu_page(
+        'ZATA S3 Backup',
+        'ZATA S3 Backup',
+        'manage_options',
+        'zata-wps3b',
+        'zata_wps3b_render_page',
+        'dashicons-cloud',
+        80
+    );
 });
 
-/**
- * Load CSS/JS only on this plugin admin page
- */
-add_action('admin_enqueue_scripts', function ($hook) {
-  if ($hook !== 'toplevel_page_' . WPS3B_SLUG) return;
-
-  wp_enqueue_style('wps3b-admin', plugins_url('assets/admin.css', __FILE__), [], WPS3B_VERSION);
-  wp_enqueue_script('wps3b-admin', plugins_url('assets/admin.js', __FILE__), ['jquery'], WPS3B_VERSION, true);
-
-  wp_localize_script('wps3b-admin', 'WPS3B_PRESETS', [
-    'zata' => [
-      'endpoint' => 'idr01.zata.ai',
-    'scheme' => 'https',
-      'region' => '',
-      'prefix' => 'wp-backups',
-      'path_style' => true,
-    ],
-    'aws' => [
-      'endpoint' => 'https://s3.amazonaws.com',
-      'region' => 'ap-south-1',
-      'prefix' => 'wp-backups',
-      'path_style' => false,
-    ],
-    'minio' => [
-      'endpoint' => 'https://rgw.example.com',
-      'region' => 'us-east-1',
-      'prefix' => 'wp-backups',
-      'path_style' => true,
-    ],
-  ]);
-});
-
-/**
- * Register settings + defaults
- */
-add_action('admin_init', function () {
-  $existing = get_option(WPS3B_OPT, null);
-  if ($existing === null) {
-    add_option(WPS3B_OPT, wps3b_default_settings());
-  } else {
-    $merged = array_merge(wps3b_default_settings(), is_array($existing) ? $existing : []);
-    if ($merged !== $existing) update_option(WPS3B_OPT, $merged);
-  }
-
-  register_setting('wps3b_group', WPS3B_OPT, [
-    'sanitize_callback' => 'wps3b_sanitize_settings',
-  ]);
-
-  add_action('update_option_' . WPS3B_OPT, function ($old, $new) {
-    wps3b_reschedule_cron(is_array($new) ? $new : []);
-  }, 10, 2);
-});
-
-/**
- * Custom schedule interval
- */
-add_filter('cron_schedules', function ($schedules) {
-  $opt = get_option(WPS3B_OPT, []);
-  $mins = max(5, (int)($opt['custom_minutes'] ?? 60));
-  $schedules['wps3b_custom'] = [
-    'interval' => $mins * 60,
-    'display' => "ZATA S3 Backup (every {$mins} minutes)",
-  ];
-  return $schedules;
-});
-
-function wps3b_sanitize_settings($in) {
-  $defaults = wps3b_default_settings();
-  $out = [];
-
-  $out['provider']     = isset($in['provider']) ? sanitize_text_field($in['provider']) : $defaults['provider'];
-
-  $endpoint_in = isset($in['endpoint']) ? trim($in['endpoint']) : $defaults['endpoint'];
-  // Allow users to enter endpoint without http/https; store host[:port] only
-  $endpoint_in = preg_replace('#^https?://#i', '', $endpoint_in);
-  $endpoint_in = rtrim($endpoint_in, '/');
-  $out['endpoint'] = sanitize_text_field($endpoint_in);
-
-  // Protocol for endpoint (useful for non-TLS MinIO/RGW). Default https.
-  $scheme_in = isset($in['scheme']) ? strtolower(trim($in['scheme'])) : $defaults['scheme'];
-  $out['scheme'] = in_array($scheme_in, ['http','https'], true) ? $scheme_in : $defaults['scheme'];
-  $out['region']       = isset($in['region']) ? sanitize_text_field(trim($in['region'])) : $defaults['region'];
-  $out['bucket']       = isset($in['bucket']) ? sanitize_text_field(trim($in['bucket'])) : '';
-  $out['access_key']   = isset($in['access_key']) ? sanitize_text_field(trim($in['access_key'])) : '';
-  $out['secret_key']   = isset($in['secret_key']) ? sanitize_text_field(trim($in['secret_key'])) : '';
-
-  $out['key_prefix']   = isset($in['key_prefix']) ? sanitize_text_field(trim($in['key_prefix'])) : $defaults['key_prefix'];
-
-  $out['path_style']   = !empty($in['path_style']) ? 1 : 0;
-  $out['insecure_tls'] = !empty($in['insecure_tls']) ? 1 : 0;
-
-  $out['include_db']      = !empty($in['include_db']) ? 1 : 0;
-  $out['include_themes']  = !empty($in['include_themes']) ? 1 : 0;
-  $out['include_plugins'] = !empty($in['include_plugins']) ? 1 : 0;
-
-  $out['keep_local'] = isset($in['keep_local']) ? max(0, (int)$in['keep_local']) : $defaults['keep_local'];
-
-  $allowed = ['disabled', 'hourly', 'twicedaily', 'daily', 'weekly', 'wps3b_custom'];
-  $out['schedule'] = in_array(($in['schedule'] ?? $defaults['schedule']), $allowed, true) ? $in['schedule'] : $defaults['schedule'];
-  $out['custom_minutes'] = isset($in['custom_minutes']) ? max(5, (int)$in['custom_minutes']) : $defaults['custom_minutes'];
-
-  $out['notify_enabled'] = !empty($in['notify_enabled']) ? 1 : 0;
-  $out['notify_on_success'] = !empty($in['notify_on_success']) ? 1 : 0;
-  $out['notify_email']   = isset($in['notify_email']) ? sanitize_email(trim($in['notify_email'])) : get_option('admin_email');
-
-  return $out;
+/* ---------------------------
+ * Helpers: settings + logs + test status
+ * --------------------------- */
+function zata_wps3b_get_settings() {
+    return zata_wps3b_default_settings();
+}
+function zata_wps3b_set_log($text) {
+    update_option(ZATA_WPS3B_LOG, $text, false);
+}
+function zata_wps3b_get_log() {
+    return (string) get_option(ZATA_WPS3B_LOG, 'No logs yet.');
+}
+function zata_wps3b_append_log_line(&$lines, $line) {
+    $lines[] = '[' . current_time('Y-m-d H:i:s') . '] ' . $line;
+}
+function zata_wps3b_set_test_status($ok, $message) {
+    update_option(ZATA_WPS3B_TEST, [
+        'ok' => (bool)$ok,
+        'message' => (string)$message,
+        'time' => time(),
+    ], false);
+}
+function zata_wps3b_get_test_status() {
+    $t = get_option(ZATA_WPS3B_TEST, null);
+    if (!is_array($t)) return ['ok'=>false,'message'=>'Not tested yet.','time'=>0];
+    return array_merge(['ok'=>false,'message'=>'Not tested yet.','time'=>0], $t);
 }
 
-/**
- * Cron schedule handler
- */
-function wps3b_reschedule_cron(array $s) {
-  $hook = 'wps3b_run_backup_cron';
+/* ---------------------------
+ * Backup runner: local + optional remote upload
+ * --------------------------- */
+function zata_wps3b_run_backup($mode = 'manual') {
+    $s = zata_wps3b_get_settings();
+    $lines = [];
+    $success = false;
+    zata_wps3b_append_log_line($lines, "Backup run started ({$mode}).");
 
-  $timestamp = wp_next_scheduled($hook);
-  while ($timestamp) {
-    wp_unschedule_event($timestamp, $hook);
-    $timestamp = wp_next_scheduled($hook);
-  }
+    $include_db      = !empty($s['include_db']);
+    $include_themes  = !empty($s['include_themes']);
+    $include_plugins = !empty($s['include_plugins']);
 
-  if (($s['schedule'] ?? 'daily') === 'disabled') return;
+    if (!$include_db && !$include_themes && !$include_plugins) {
+        zata_wps3b_append_log_line($lines, "✖ ERROR: Nothing selected to backup. Enable DB/Themes/Plugins.");
+        zata_wps3b_set_log(implode("\n", $lines));
+        
+        // Send failure notification
+        zata_wps3b_send_notification(false, implode("\n", $lines), $mode);
+        return;
+    }
 
-  $recurrence = $s['schedule'] ?? 'daily';
-  if (!in_array($recurrence, ['hourly', 'twicedaily', 'daily', 'weekly', 'wps3b_custom'], true)) {
-    $recurrence = 'daily';
-  }
+    $upload_dir = wp_upload_dir();
+    $base_dir = trailingslashit($upload_dir['basedir']) . 'zata-backups';
+    if (!file_exists($base_dir)) wp_mkdir_p($base_dir);
 
-  wp_schedule_event(time() + 300, $recurrence, $hook);
+    $site = parse_url(home_url(), PHP_URL_HOST);
+    $ts = date('Ymd-His');
+
+    $files = []; // type => path
+
+    try {
+        if ($include_db) {
+            $db_file = $base_dir . "/{$site}-db-{$ts}.sql";
+            zata_wps3b_db_dump($db_file);
+            $files['db'] = $db_file;
+            zata_wps3b_append_log_line($lines, "✓ Database backup created: {$db_file}");
+        } else {
+            zata_wps3b_append_log_line($lines, "• Database backup skipped (not selected).");
+        }
+
+        if ($include_themes) {
+            $themes_zip = $base_dir . "/{$site}-themes-{$ts}.zip";
+            zata_wps3b_zip_dir(WP_CONTENT_DIR . '/themes', $themes_zip);
+            $files['themes'] = $themes_zip;
+            zata_wps3b_append_log_line($lines, "✓ Themes ZIP created: {$themes_zip}");
+        } else {
+            zata_wps3b_append_log_line($lines, "• Themes backup skipped (not selected).");
+        }
+
+        if ($include_plugins) {
+            $plugins_zip = $base_dir . "/{$site}-plugins-{$ts}.zip";
+            zata_wps3b_zip_dir(WP_CONTENT_DIR . '/plugins', $plugins_zip);
+            $files['plugins'] = $plugins_zip;
+            zata_wps3b_append_log_line($lines, "✓ Plugins ZIP created: {$plugins_zip}");
+        } else {
+            zata_wps3b_append_log_line($lines, "• Plugins backup skipped (not selected).");
+        }
+
+        // Local retention
+        zata_wps3b_local_retention($base_dir, $site, (int)$s['keep_local']);
+
+        // Upload if configured
+        if (zata_wps3b_is_remote_configured($s)) {
+            zata_wps3b_append_log_line($lines, "Remote upload enabled: {$s['provider']}");
+
+            $prefix = trim((string)$s['prefix']);
+            $prefix = $prefix === '' ? 'wp-backups' : trim($prefix, '/');
+
+            if (!empty($files['db'])) {
+                zata_wps3b_upload_file($s, $files['db'], "{$prefix}/db/" . basename($files['db']), $lines);
+            }
+            if (!empty($files['themes'])) {
+                zata_wps3b_upload_file($s, $files['themes'], "{$prefix}/themes/" . basename($files['themes']), $lines);
+            }
+            if (!empty($files['plugins'])) {
+                zata_wps3b_upload_file($s, $files['plugins'], "{$prefix}/plugins/" . basename($files['plugins']), $lines);
+            }
+        } else {
+            zata_wps3b_append_log_line($lines, "Remote upload skipped: destination not configured.");
+        }
+
+        zata_wps3b_append_log_line($lines, "Backup completed successfully.");
+        $success = true;
+        
+        // Record last backup time
+        $s['last_backup'] = time();
+        update_option(ZATA_WPS3B_OPT, $s, false);
+
+    } catch (Exception $e) {
+        zata_wps3b_append_log_line($lines, "✖ ERROR: " . $e->getMessage());
+        $success = false;
+    }
+
+    $log_text = implode("\n", $lines);
+    zata_wps3b_set_log($log_text);
+    
+    // Send email notification
+    zata_wps3b_send_notification($success, $log_text, $mode);
 }
 
-/**
- * Actions: download/clear logs
- */
-add_action('admin_post_wps3b_download_log', function () {
-  if (!current_user_can('manage_options')) wp_die('Unauthorized');
-  check_admin_referer('wps3b_download_log');
+/* ---------------------------
+ * Local backup helpers
+ * --------------------------- */
+function zata_wps3b_db_dump($output_file) {
+    global $wpdb;
 
-  $file = function_exists('wps3b_log_file') ? wps3b_log_file() : '';
-  if (!$file || !file_exists($file)) wp_die('Log file not found');
+    $tables = $wpdb->get_col('SHOW TABLES');
+    if (!$tables) throw new Exception('No DB tables found.');
 
-  header('Content-Type: text/plain');
-  header('Content-Disposition: attachment; filename="wps3b.log"');
-  readfile($file);
-  exit;
-});
+    $fh = fopen($output_file, 'w');
+    if (!$fh) throw new Exception('Unable to write DB file.');
 
-add_action('admin_post_wps3b_clear_log', function () {
-  if (!current_user_can('manage_options')) wp_die('Unauthorized');
-  check_admin_referer('wps3b_clear_log');
+    fwrite($fh, "-- WordPress Database Backup\n");
+    fwrite($fh, "-- Generated: " . date('Y-m-d H:i:s') . "\n\n");
 
-  $file = function_exists('wps3b_log_file') ? wps3b_log_file() : '';
-  if ($file && file_exists($file)) @unlink($file);
+    foreach ($tables as $table) {
+        $create = $wpdb->get_row("SHOW CREATE TABLE `$table`", ARRAY_N);
+        if (!$create || empty($create[1])) continue;
 
-  update_option(WPS3B_HISTORY_OPT, []);
+        fwrite($fh, "\n-- Table: {$table}\n");
+        fwrite($fh, "DROP TABLE IF EXISTS `$table`;\n");
+        fwrite($fh, $create[1] . ";\n\n");
 
-  $redirect = add_query_arg([
-    'page' => WPS3B_SLUG,
-    'tab' => 'logs',
-    'wps3b_msg' => 'success',
-    'wps3b_detail' => rawurlencode('Logs cleared.'),
-  ], admin_url('admin.php'));
+        $rows = $wpdb->get_results("SELECT * FROM `$table`", ARRAY_A);
+        if (!$rows) continue;
 
-  wp_safe_redirect($redirect);
-  exit;
-});
+        foreach ($rows as $row) {
+            $vals = [];
+            foreach ($row as $v) {
+                if ($v === null) $vals[] = 'NULL';
+                else $vals[] = "'" . str_replace(["\\", "'"], ["\\\\", "\\'"], (string)$v) . "'";
+            }
+            fwrite($fh, "INSERT INTO `$table` VALUES (" . implode(',', $vals) . ");\n");
+        }
+    }
 
-/**
- * (i) tooltip icon helper
- */
-function wps3b_info_icon(string $text): string {
-  return '<span class="wps3b-info dashicons dashicons-info-outline" title="' . esc_attr($text) . '"></span>';
+    fclose($fh);
 }
 
-/**
- * Settings + Logs page (tabs)
- */
-function wps3b_render_settings_page() {
-  if (!current_user_can('manage_options')) return;
+function zata_wps3b_zip_dir($source, $destination) {
+    if (!extension_loaded('zip')) throw new Exception('ZIP extension missing.');
+    $zip = new ZipArchive();
+    if ($zip->open($destination, ZipArchive::CREATE | ZipArchive::OVERWRITE) !== true) {
+        throw new Exception('Cannot create ZIP: ' . basename($destination));
+    }
 
-  $opt = get_option(WPS3B_OPT, []);
-  $opt = is_array($opt) ? $opt : [];
-  $tab = isset($_GET['tab']) ? sanitize_text_field($_GET['tab']) : 'settings';
+    $source = realpath($source);
+    if (!$source) throw new Exception('Source path does not exist.');
 
-  $msg = isset($_GET['wps3b_msg']) ? sanitize_text_field($_GET['wps3b_msg']) : '';
-  $detail = isset($_GET['wps3b_detail']) ? sanitize_text_field($_GET['wps3b_detail']) : '';
+    $iter = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($source, RecursiveDirectoryIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::SELF_FIRST
+    );
 
-  $zata_link = 'https://zata.ai';
-  $logo_url = plugins_url('assets/zata_icon.png', __FILE__);
-  ?>
-  <div class="wrap wps3b-wrap">
-    <div class="wps3b-header">
-      <div class="wps3b-brand">
-        <img src="<?php echo esc_url($logo_url); ?>" alt="ZATA" />
-        <div>
-          <div class="wps3b-title">ZATA S3 WordPress Backup</div>
-          <div class="wps3b-subtitle">Separate ZIPs → Upload to ZATA / S3-compatible storage</div>
-        </div>
-      </div>
-      <div class="wps3b-cta">
-        Don’t have a ZATA account?
-        <a class="button button-secondary" href="<?php echo esc_url($zata_link); ?>" target="_blank" rel="noopener noreferrer">Go to zata.ai</a>
-      </div>
-    </div>
+    foreach ($iter as $item) {
+        if ($item->isFile()) {
+            $real = $item->getRealPath();
+            $rel = substr($real, strlen($source) + 1);
+            $zip->addFile($real, $rel);
+        }
+    }
 
-    <h2 class="nav-tab-wrapper">
-      <a class="nav-tab <?php echo $tab === 'settings' ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url(add_query_arg(['page'=>WPS3B_SLUG,'tab'=>'settings'], admin_url('admin.php'))); ?>">Settings</a>
-      <a class="nav-tab <?php echo $tab === 'logs' ? 'nav-tab-active' : ''; ?>" href="<?php echo esc_url(add_query_arg(['page'=>WPS3B_SLUG,'tab'=>'logs'], admin_url('admin.php'))); ?>">Logs</a>
-    </h2>
+    $zip->close();
+}
 
-    <?php if ($msg): ?>
-      <div class="notice <?php echo $msg === 'success' ? 'notice-success' : 'notice-error'; ?> is-dismissible">
-        <p><strong><?php echo esc_html($detail); ?></strong></p>
-      </div>
-    <?php endif; ?>
+function zata_wps3b_local_retention($base_dir, $site, $keep_local) {
+    if ($keep_local < 1) return;
 
-    <?php if ($tab === 'logs'): ?>
-      <?php wps3b_render_logs_tab(); ?>
-      <?php return; ?>
-    <?php endif; ?>
+    foreach (['db', 'themes', 'plugins'] as $type) {
+        $pattern = "{$base_dir}/{$site}-{$type}-*.";
+        $files = glob($pattern . '*');
+        if (!$files) continue;
 
-    <form method="post" action="options.php">
-      <?php settings_fields('wps3b_group'); ?>
+        usort($files, function($a, $b) { return filemtime($b) - filemtime($a); });
+        $to_delete = array_slice($files, $keep_local);
+        foreach ($to_delete as $old) {
+            @unlink($old);
+        }
+    }
+}
 
-      <div class="wps3b-card">
-        <h2>Provider Preset</h2>
-        <table class="form-table">
-          <tr>
-            <th>Preset <?php echo wps3b_info_icon('Quick-fill endpoint/region/path-style for ZATA/AWS/MinIO. You can still edit manually.'); ?></th>
-            <td>
-              <?php $provider = $opt['provider'] ?? 'zata'; ?>
-              <select id="wps3b_provider" name="<?php echo esc_attr(WPS3B_OPT); ?>[provider]">
-                <option value="zata" <?php selected($provider, 'zata'); ?>>ZATA (Central India)</option>
-                <option value="aws" <?php selected($provider, 'aws'); ?>>AWS S3</option>
-                <option value="minio" <?php selected($provider, 'minio'); ?>>MinIO / Ceph RGW</option>
-                <option value="custom" <?php selected($provider, 'custom'); ?>>Custom</option>
-              </select>
-              <p class="description">Recommended preset: ZATA (Central India).</p>
-            </td>
-          </tr>
-        </table>
-      </div>
+/* ---------------------------
+ * S3 helpers
+ * --------------------------- */
+function zata_wps3b_is_remote_configured($s) {
+    return !empty($s['endpoint']) && !empty($s['bucket']) && !empty($s['access_key']) && !empty($s['secret_key']);
+}
 
-      <div class="wps3b-grid">
-        <div class="wps3b-card">
-          <h2>Backup Content</h2>
-          <table class="form-table">
-            <tr>
-              <th>Include <?php echo wps3b_info_icon('Backups are created as separate ZIPs (DB, Themes, Plugins) for easy restore.'); ?></th>
-              <td>
-                <label><input type="checkbox" name="<?php echo esc_attr(WPS3B_OPT); ?>[include_db]" value="1" <?php checked(!empty($opt['include_db'])); ?> /> Database</label><br>
-                <label><input type="checkbox" name="<?php echo esc_attr(WPS3B_OPT); ?>[include_themes]" value="1" <?php checked(!empty($opt['include_themes'])); ?> /> Themes</label><br>
-                <label><input type="checkbox" name="<?php echo esc_attr(WPS3B_OPT); ?>[include_plugins]" value="1" <?php checked(!empty($opt['include_plugins'])); ?> /> Plugins</label>
-              </td>
-            </tr>
-            <tr>
-              <th>Keep local ZIP copies <?php echo wps3b_info_icon('Keeps the latest N ZIPs in wp-content/uploads/wps3b-backups. Set 0 to keep none locally.'); ?></th>
-              <td>
-                <input type="number" min="0" name="<?php echo esc_attr(WPS3B_OPT); ?>[keep_local]" value="<?php echo esc_attr((int)($opt['keep_local'] ?? 3)); ?>" />
-              </td>
-            </tr>
-          </table>
-        </div>
+function zata_wps3b_s3_url($s, $key) {
+    $host = trim((string)$s['endpoint']);
+    $bucket = trim((string)$s['bucket']);
+    $protocol = ($s['protocol'] === 'http') ? 'http' : 'https';
+    $path_style = !empty($s['path_style']);
 
-        <div class="wps3b-card">
-          <h2>S3 / Object Storage</h2>
-          <table class="form-table">
-            <tr>
-              <th>Endpoint <?php echo wps3b_info_icon('ZATA Central India endpoint: https://idr01.zata.ai. For MinIO/Ceph RGW use your RGW base URL.'); ?></th>
-              <td>
-                <input type="text" class="regular-text" id="wps3b_endpoint"
-                  name="<?php echo esc_attr(WPS3B_OPT); ?>[endpoint]"
-                  value="<?php echo esc_attr($opt['endpoint'] ?? ''); ?>" />
-              </td>
-            </tr>
-            <tr>
-              <th>Protocol <?php echo wps3b_info_icon('Usually HTTPS. Use HTTP only if your MinIO/RGW endpoint is not using TLS.'); ?></th>
-              <td>
-                <select name="<?php echo esc_attr(WPS3B_OPT); ?>[scheme]">
-                  <option value="https" <?php selected(($opt['scheme'] ?? 'https'), 'https'); ?>>https</option>
-                  <option value="http" <?php selected(($opt['scheme'] ?? 'https'), 'http'); ?>>http</option>
-                </select>
-              </td>
-            </tr>
+    if ($path_style) {
+        return "{$protocol}://{$host}/{$bucket}/{$key}";
+    } else {
+        return "{$protocol}://{$bucket}.{$host}/{$key}";
+    }
+}
 
-            <tr>
-              <th>Region <?php echo wps3b_info_icon('Optional for ZATA / most S3-compatible endpoints. Required for AWS (e.g., ap-south-1). If empty, plugin will sign with us-east-1.'); ?></th>
-              <td>
-                <input type="text" class="regular-text" id="wps3b_region"
-                  name="<?php echo esc_attr(WPS3B_OPT); ?>[region]"
-                  value="<?php echo esc_attr($opt['region'] ?? 'CentralIndia'); ?>" />
-              </td>
-            </tr>
-            <tr>
-              <th>Bucket <?php echo wps3b_info_icon('Bucket must already exist in your S3 storage. Example: wp-backups.'); ?></th>
-              <td><input type="text" class="regular-text" name="<?php echo esc_attr(WPS3B_OPT); ?>[bucket]" value="<?php echo esc_attr($opt['bucket'] ?? ''); ?>" /></td>
-            </tr>
-            <tr>
-              <th>Access Key <?php echo wps3b_info_icon('Create/view credentials in your ZATA dashboard under S3 credentials (Access Key / Secret Key).'); ?></th>
-              <td><input type="text" class="regular-text" name="<?php echo esc_attr(WPS3B_OPT); ?>[access_key]" value="<?php echo esc_attr($opt['access_key'] ?? ''); ?>" /></td>
-            </tr>
-            <tr>
-              <th>Secret Key <?php echo wps3b_info_icon('Keep this secret. It is stored in WordPress options. Do not share it.'); ?></th>
-              <td><input type="password" class="regular-text" name="<?php echo esc_attr(WPS3B_OPT); ?>[secret_key]" value="<?php echo esc_attr($opt['secret_key'] ?? ''); ?>" autocomplete="new-password" /></td>
-            </tr>
-            <tr>
-              <th>Key prefix <?php echo wps3b_info_icon('Remote path prefix in bucket. Uploads to prefix/db, prefix/themes, prefix/plugins.'); ?></th>
-              <td>
-                <input type="text" class="regular-text" id="wps3b_prefix" name="<?php echo esc_attr(WPS3B_OPT); ?>[key_prefix]" value="<?php echo esc_attr($opt['key_prefix'] ?? 'wp-backups'); ?>" />
-              </td>
-            </tr>
-            <tr>
-              <th>Compatibility</th>
-              <td>
-                <label>
-                  <input type="checkbox" id="wps3b_path_style" name="<?php echo esc_attr(WPS3B_OPT); ?>[path_style]" value="1" <?php checked(!empty($opt['path_style'])); ?> />
-                  Path-style addressing
-                  <?php echo wps3b_info_icon('Enable for ZATA/MinIO/Ceph RGW. Disable for AWS virtual-host style.'); ?>
-                </label><br>
-                <label>
-                  <input type="checkbox" name="<?php echo esc_attr(WPS3B_OPT); ?>[insecure_tls]" value="1" <?php checked(!empty($opt['insecure_tls'])); ?> />
-                  Allow insecure TLS (self-signed)
-                  <?php echo wps3b_info_icon('Only enable for self-signed object storage endpoints.'); ?>
+function zata_wps3b_s3_sign($s, $method, $key, $body = '') {
+    $ak = (string)$s['access_key'];
+    $sk = (string)$s['secret_key'];
+    $bucket = (string)$s['bucket'];
+    $region = trim((string)$s['region']) ?: 'us-east-1';
+
+    $host = trim((string)$s['endpoint']);
+    $path_style = !empty($s['path_style']);
+
+    $canonical_uri = $path_style ? "/{$bucket}/{$key}" : "/{$key}";
+    $canonical_uri = '/' . implode('/', array_map('rawurlencode', explode('/', trim($canonical_uri, '/'))));
+
+    $dt = gmdate('Ymd\THis\Z');
+    $date = substr($dt, 0, 8);
+
+    $payload_hash = hash('sha256', $body);
+
+    $canonical_headers = "host:{$host}\nx-amz-content-sha256:{$payload_hash}\nx-amz-date:{$dt}\n";
+    $signed_headers = 'host;x-amz-content-sha256;x-amz-date';
+
+    $canonical_request = "{$method}\n{$canonical_uri}\n\n{$canonical_headers}\n{$signed_headers}\n{$payload_hash}";
+    $canonical_hash = hash('sha256', $canonical_request);
+
+    $scope = "{$date}/{$region}/s3/aws4_request";
+    $string_to_sign = "AWS4-HMAC-SHA256\n{$dt}\n{$scope}\n{$canonical_hash}";
+
+    $k_secret = "AWS4{$sk}";
+    $k_date = hash_hmac('sha256', $date, $k_secret, true);
+    $k_region = hash_hmac('sha256', $region, $k_date, true);
+    $k_service = hash_hmac('sha256', 's3', $k_region, true);
+    $k_signing = hash_hmac('sha256', 'aws4_request', $k_service, true);
+
+    $signature = hash_hmac('sha256', $string_to_sign, $k_signing);
+
+    $authorization = "AWS4-HMAC-SHA256 Credential={$ak}/{$scope}, SignedHeaders={$signed_headers}, Signature={$signature}";
+
+    return [
+        'Authorization' => $authorization,
+        'x-amz-content-sha256' => $payload_hash,
+        'x-amz-date' => $dt,
+    ];
+}
+
+function zata_wps3b_s3_request($s, $method, $key, $body = '', $extra_headers = []) {
+    $url = zata_wps3b_s3_url($s, $key);
+    $auth_headers = zata_wps3b_s3_sign($s, $method, $key, $body);
+
+    $headers = array_merge($auth_headers, $extra_headers);
+    $header_strings = [];
+    foreach ($headers as $k => $v) {
+        $header_strings[] = "{$k}: {$v}";
+    }
+
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, $header_strings);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+
+    if ($method === 'PUT' && $body !== '') {
+        curl_setopt($ch, CURLOPT_POSTFIELDS, $body);
+    }
+
+    $response = curl_exec($ch);
+    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $error = curl_error($ch);
+    curl_close($ch);
+
+    if ($error) throw new Exception("cURL error: {$error}");
+    if ($http_code < 200 || $http_code >= 300) {
+        throw new Exception("S3 HTTP {$http_code}: " . substr($response, 0, 200));
+    }
+
+    return ['code' => $http_code, 'body' => $response];
+}
+
+function zata_wps3b_upload_file($s, $local_path, $remote_key, &$lines) {
+    if (!file_exists($local_path)) {
+        zata_wps3b_append_log_line($lines, "✖ Local file not found: {$local_path}");
+        return;
+    }
+
+    $size = filesize($local_path);
+    $body = file_get_contents($local_path);
+
+    zata_wps3b_append_log_line($lines, "Uploading " . basename($local_path) . " → {$remote_key}");
+
+    try {
+        $r = zata_wps3b_s3_request($s, 'PUT', $remote_key, $body, ['Content-Type' => 'application/octet-stream']);
+        zata_wps3b_append_log_line($lines, "✓ Upload OK: {$remote_key}");
+    } catch (Exception $e) {
+        zata_wps3b_append_log_line($lines, "✖ Upload failed: " . $e->getMessage());
+    }
+}
+
+/* ---------------------------
+ * Admin page UI
+ * --------------------------- */
+function zata_wps3b_render_page() {
+    // Handle form submissions
+    $notice = null;
+    $notice_type = 'success';
+
+    // 1) Save settings
+    if (isset($_POST['zata_wps3b_save']) && check_admin_referer('zata_wps3b_save', 'zata_wps3b_nonce')) {
+        $new_settings = [
+            'provider'        => sanitize_text_field($_POST['provider'] ?? 'zata'),
+            'endpoint'        => sanitize_text_field($_POST['endpoint'] ?? ''),
+            'protocol'        => sanitize_text_field($_POST['protocol'] ?? 'https'),
+            'region'          => sanitize_text_field($_POST['region'] ?? ''),
+            'bucket'          => sanitize_text_field($_POST['bucket'] ?? ''),
+            'access_key'      => sanitize_text_field($_POST['access_key'] ?? ''),
+            'secret_key'      => sanitize_text_field($_POST['secret_key'] ?? ''),
+            'prefix'          => sanitize_text_field($_POST['prefix'] ?? 'wp-backups'),
+            'path_style'      => isset($_POST['path_style']) ? 1 : 0,
+            'include_db'      => isset($_POST['include_db']) ? 1 : 0,
+            'include_themes'  => isset($_POST['include_themes']) ? 1 : 0,
+            'include_plugins' => isset($_POST['include_plugins']) ? 1 : 0,
+            'schedule'        => sanitize_text_field($_POST['schedule'] ?? ''),
+            'backup_time'     => sanitize_text_field($_POST['backup_time'] ?? '02:00'),
+            'keep_local'      => max(0, (int) ($_POST['keep_local'] ?? 3)),
+            'last_backup'     => $s['last_backup'] ?? 0, // Preserve last backup time
+            'notify_enabled'  => isset($_POST['notify_enabled']) ? 1 : 0,
+            'notify_on'       => sanitize_text_field($_POST['notify_on'] ?? 'both'),
+            'notify_email'    => sanitize_email($_POST['notify_email'] ?? get_option('admin_email')),
+        ];
+
+        update_option(ZATA_WPS3B_OPT, $new_settings, false);
+        zata_wps3b_apply_schedule();
+
+        $notice = 'Settings saved successfully!';
+        if ($new_settings['schedule'] === 'daily') {
+            $next = zata_wps3b_get_next_scheduled();
+            if ($next) {
+                $notice .= ' Next backup: ' . date('Y-m-d H:i:s', $next);
+            }
+        }
+        $notice_type = 'success';
+    }
+
+    // 2) Test connection
+    if (isset($_POST['zata_wps3b_test']) && check_admin_referer('zata_wps3b_test', 'zata_wps3b_test_nonce')) {
+        $s = zata_wps3b_get_settings();
+        if (!zata_wps3b_is_remote_configured($s)) {
+            zata_wps3b_set_test_status(false, 'Remote not configured.');
+            $notice = 'Remote storage not configured.';
+            $notice_type = 'error';
+        } else {
+            $test_key = trim((string)$s['prefix'], '/') . '/.test-' . uniqid();
+            $test_body = 'ZATA test: ' . time();
+
+            try {
+                zata_wps3b_s3_request($s, 'PUT', $test_key, $test_body);
+                zata_wps3b_s3_request($s, 'GET', $test_key);
+                zata_wps3b_s3_request($s, 'DELETE', $test_key);
+                zata_wps3b_set_test_status(true, 'All operations OK (write/read/delete).');
+                $notice = 'Connection test successful! All operations (write/read/delete) passed.';
+                $notice_type = 'success';
+            } catch (Exception $e) {
+                zata_wps3b_set_test_status(false, 'Test failed: ' . $e->getMessage());
+                $notice = 'Connection test failed: ' . $e->getMessage();
+                $notice_type = 'error';
+            }
+        }
+    }
+
+    // 3) Run backup
+    if (isset($_POST['zata_wps3b_run']) && check_admin_referer('zata_wps3b_run', 'zata_wps3b_run_nonce')) {
+        zata_wps3b_run_backup('manual');
+        $notice = 'Backup completed! Check the logs below for details.';
+        $notice_type = 'success';
+    }
+
+    // 4) Send test email
+    if (isset($_POST['zata_wps3b_test_email']) && check_admin_referer('zata_wps3b_test_email', 'zata_wps3b_test_email_nonce')) {
+        $test_email = !empty($s['notify_email']) ? $s['notify_email'] : get_option('admin_email');
+        $subject = '[' . get_bloginfo('name') . '] Test Email - ZATA S3 Backup';
+        $message = "This is a test email from ZATA S3 Backup plugin.\n\n";
+        $message .= "Site: " . home_url() . "\n";
+        $message .= "Time: " . current_time('Y-m-d H:i:s') . "\n\n";
+        $message .= "If you receive this email, your notification settings are working correctly!\n\n";
+        $message .= "---\n";
+        $message .= "Plugin URL: " . admin_url('admin.php?page=zata-wps3b') . "\n";
+        
+        $headers = ['Content-Type: text/plain; charset=UTF-8'];
+        
+        if (wp_mail($test_email, $subject, $message, $headers)) {
+            $notice = 'Test email sent successfully to ' . $test_email . '! Check your inbox.';
+            $notice_type = 'success';
+        } else {
+            $notice = 'Failed to send test email. Please check your WordPress email configuration.';
+            $notice_type = 'error';
+        }
+    }
+
+    // Get current settings
+    $s = zata_wps3b_get_settings();
+    $test = zata_wps3b_get_test_status();
+    $log = zata_wps3b_get_log();
+
+    $remote_configured = zata_wps3b_is_remote_configured($s);
+    $run_disabled = $remote_configured && !$test['ok'];
+    ?>
+    <div class="wrap" style="max-width:1200px;">
+        <h1>ZATA S3 Backup</h1>
+        <p style="color:#666;margin-bottom:24px;">Backup WordPress DB, themes, and plugins to ZATA / S3-compatible storage.</p>
+
+        <?php if ($notice): ?>
+            <div class="notice notice-<?php echo $notice_type === 'error' ? 'error' : 'success'; ?> is-dismissible">
+                <p><?php echo esc_html($notice); ?></p>
+            </div>
+        <?php endif; ?>
+
+        <style>
+            .zata-provider {display:none;}
+            .zata-tile {
+                display:flex;align-items:center;gap:12px;
+                padding:16px 20px;border:2px solid #ddd;border-radius:6px;
+                cursor:pointer;transition:all .2s;
+            }
+            .zata-tile:hover { border-color:#0073aa; }
+            .zata-provider:checked + .zata-tile {
+                border-color:#0073aa;background:#f0f8ff;
+            }
+            .zata-ico {font-size:28px;color:#0073aa;}
+            .zata-title {font-weight:600;font-size:15px;}
+            .zata-sub {font-size:13px;color:#666;}
+            .zata-layout {display:flex;gap:20px;margin-top:20px;flex-wrap:wrap;}
+            .zata-card {flex:1;min-width:460px;background:#fff;border:1px solid #ccd0d4;padding:20px;box-shadow:0 1px 1px rgba(0,0,0,.04);}
+            .zata-card h2 {margin-top:16px;margin-bottom:10px;font-size:16px;}
+            .zata-actions {display:flex;gap:10px;margin-top:14px;}
+            .zata-checks {display:flex;flex-direction:column;gap:8px;margin-bottom:16px;}
+            .zata-checks label {display:flex;align-items:center;gap:8px;}
+            .zata-hint {font-size:13px;color:#666;margin-top:4px;}
+            .zata-mono {
+                font-family:Consolas,Monaco,monospace;font-size:12px;
+                background:#f7f7f7;padding:12px;border:1px solid #ddd;
+                border-radius:4px;white-space:pre-wrap;max-height:400px;overflow-y:auto;
+            }
+            .zata-badge {
+                display:inline-block;padding:4px 10px;border-radius:4px;
+                font-size:13px;font-weight:600;background:#f0f0f0;color:#666;
+            }
+            .zata-badge.ok {background:#d4edda;color:#155724;}
+            .zata-badge.bad {background:#f8d7da;color:#721c24;}
+        </style>
+
+        <form method="post" action="">
+            <?php wp_nonce_field('zata_wps3b_save', 'zata_wps3b_nonce'); ?>
+
+            <h2 style="margin-bottom:12px;">Storage Provider</h2>
+            <div style="display:flex;gap:16px;margin-bottom:24px;">
+                <input class="zata-provider" type="radio" id="prov_zata" name="provider" value="zata" <?php checked($s['provider'], 'zata'); ?>>
+                <label class="zata-tile" for="prov_zata">
+                    <span class="dashicons dashicons-cloud zata-ico"></span>
+                    <div>
+                        <div class="zata-title">ZATA (Default)</div>
+                        <div class="zata-sub">Pre-filled preset, S3-compatible</div>
+                    </div>
                 </label>
-              </td>
-            </tr>
-          </table>
-        </div>
-      </div>
 
-      <div class="wps3b-grid">
-        <div class="wps3b-card">
-          <h2>Schedule</h2>
-          <table class="form-table">
-            <tr>
-              <th>Backup schedule <?php echo wps3b_info_icon('WordPress wp-cron runs on site visits. For exact timing, trigger wp-cron.php via server cron.'); ?></th>
-              <td>
-                <?php $schedule = $opt['schedule'] ?? 'daily'; ?>
-                <select name="<?php echo esc_attr(WPS3B_OPT); ?>[schedule]">
-                  <option value="disabled" <?php selected($schedule, 'disabled'); ?>>Disabled</option>
-                  <option value="hourly" <?php selected($schedule, 'hourly'); ?>>Hourly</option>
-                  <option value="twicedaily" <?php selected($schedule, 'twicedaily'); ?>>Twice Daily</option>
-                  <option value="daily" <?php selected($schedule, 'daily'); ?>>Daily</option>
-                  <option value="weekly" <?php selected($schedule, 'weekly'); ?>>Weekly</option>
-                  <option value="wps3b_custom" <?php selected($schedule, 'wps3b_custom'); ?>>Custom (minutes)</option>
-                </select>
+                <input class="zata-provider" type="radio" id="prov_s3" name="provider" value="s3_generic" <?php checked($s['provider'], 's3_generic'); ?>>
+                <label class="zata-tile" for="prov_s3">
+                    <span class="dashicons dashicons-database zata-ico"></span>
+                    <div>
+                        <div class="zata-title">S3-Compatible (Generic)</div>
+                        <div class="zata-sub">AWS / MinIO / Wasabi / Ceph RGW</div>
+                    </div>
+                </label>
+            </div>
 
-                <div style="margin-top:8px;">
-                  <label>Custom minutes:
-                    <input type="number" min="5" name="<?php echo esc_attr(WPS3B_OPT); ?>[custom_minutes]" value="<?php echo esc_attr((int)($opt['custom_minutes'] ?? 60)); ?>" />
-                    <?php echo wps3b_info_icon('Used only when schedule = Custom. Minimum 5 minutes.'); ?>
-                  </label>
+            <div class="zata-layout">
+                <div class="zata-card">
+                    <h2 style="margin-top:0;">Destination Settings</h2>
+                    <table class="form-table" style="margin-top:0;">
+                        <tr>
+                            <th>Endpoint (host only)</th>
+                            <td>
+                                <input type="text" name="endpoint" id="zata_endpoint" class="regular-text" value="<?php echo esc_attr($s['endpoint']); ?>" placeholder="idr01.zata.ai">
+                                <div class="zata-hint">Use host only (no http/https). Example: <code>idr01.zata.ai</code></div>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th>Protocol</th>
+                            <td>
+                                <select name="protocol" id="zata_protocol">
+                                    <option value="https" <?php selected($s['protocol'], 'https'); ?>>https</option>
+                                    <option value="http" <?php selected($s['protocol'], 'http'); ?>>http</option>
+                                </select>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th>Region (optional)</th>
+                            <td>
+                                <input type="text" name="region" class="regular-text" value="<?php echo esc_attr($s['region']); ?>" placeholder="(optional)">
+                                <div class="zata-hint">For ZATA, keep blank. For some S3 providers, set required region.</div>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th>Bucket</th>
+                            <td><input type="text" name="bucket" class="regular-text" value="<?php echo esc_attr($s['bucket']); ?>"></td>
+                        </tr>
+                        <tr>
+                            <th>Access Key</th>
+                            <td><input type="text" name="access_key" class="regular-text" value="<?php echo esc_attr($s['access_key']); ?>"></td>
+                        </tr>
+                        <tr>
+                            <th>Secret Key</th>
+                            <td><input type="password" name="secret_key" class="regular-text" value="<?php echo esc_attr($s['secret_key']); ?>"></td>
+                        </tr>
+                        <tr>
+                            <th>Key prefix</th>
+                            <td><input type="text" name="prefix" class="regular-text" value="<?php echo esc_attr($s['prefix']); ?>"></td>
+                        </tr>
+                        <tr>
+                            <th>Compatibility</th>
+                            <td>
+                                <label>
+                                    <input type="checkbox" name="path_style" <?php checked((int)$s['path_style'], 1); ?>>
+                                    Path-style addressing (recommended)
+                                </label>
+                            </td>
+                        </tr>
+                    </table>
+
+                    <div class="zata-actions">
+                        <button type="submit" class="button button-primary" name="zata_wps3b_save" value="1">Save Settings</button>
+                    </div>
                 </div>
 
-                <?php $next = wp_next_scheduled('wps3b_run_backup_cron'); ?>
-                <p class="description"><strong>Next scheduled run:</strong> <?php echo esc_html($next ? date_i18n('Y-m-d H:i:s', $next) : '(not scheduled)'); ?></p>
-              </td>
-            </tr>
-          </table>
+                <div class="zata-card">
+                    <h2 style="margin-top:0;">Backup Content</h2>
+                    <div class="zata-checks">
+                        <label><input type="checkbox" name="include_db" <?php checked(!empty($s['include_db'])); ?>> Database</label>
+                        <label><input type="checkbox" name="include_themes" <?php checked(!empty($s['include_themes'])); ?>> Themes</label>
+                        <label><input type="checkbox" name="include_plugins" <?php checked(!empty($s['include_plugins'])); ?>> Plugins</label>
+                        <div class="zata-hint">Select what to include in backups.</div>
+                    </div>
+
+                    <hr>
+
+                    <h2>Schedule & Retention</h2>
+                    <table class="form-table" style="margin-top:0;">
+                        <tr>
+                            <th>Backup schedule</th>
+                            <td>
+                                <select name="schedule" id="backup_schedule">
+                                    <option value="" <?php selected($s['schedule'], ''); ?>>Manual only</option>
+                                    <option value="daily" <?php selected($s['schedule'], 'daily'); ?>>Daily</option>
+                                    <option value="weekly" <?php selected($s['schedule'], 'weekly'); ?>>Weekly</option>
+                                </select>
+                                <div class="zata-hint">Uses WP-Cron (no server cron required).</div>
+                            </td>
+                        </tr>
+                        <tr id="backup_time_row" style="<?php echo $s['schedule'] !== 'daily' ? 'display:none;' : ''; ?>">
+                            <th>Backup time (daily)</th>
+                            <td>
+                                <input type="time" name="backup_time" id="backup_time" value="<?php echo esc_attr($s['backup_time'] ?? '02:00'); ?>">
+                                <div class="zata-hint">Time when daily backup should run (site timezone: <?php echo wp_timezone_string(); ?>).</div>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th>Keep local copies</th>
+                            <td>
+                                <input type="number" name="keep_local" min="0" max="50" value="<?php echo esc_attr((int)$s['keep_local']); ?>">
+                                <div class="zata-hint">0 = keep all local backups.</div>
+                            </td>
+                        </tr>
+                    </table>
+
+                    <?php 
+                    $next_scheduled = zata_wps3b_get_next_scheduled();
+                    $last_backup = !empty($s['last_backup']) ? $s['last_backup'] : 0;
+                    ?>
+                    
+                    <?php if ($s['schedule'] && $next_scheduled): ?>
+                        <div style="background:#e7f5ff;border-left:4px solid #0073aa;padding:12px;margin-top:15px;">
+                            <strong>📅 Schedule Status</strong><br>
+                            <div style="margin-top:6px;">
+                                <?php if ($last_backup > 0): ?>
+                                    <div style="margin-bottom:4px;">
+                                        ⏱️ Last backup: <strong><?php echo date('Y-m-d H:i:s', $last_backup); ?></strong>
+                                        <span style="color:#666;">(<?php echo human_time_diff($last_backup, current_time('timestamp')); ?> ago)</span>
+                                    </div>
+                                <?php endif; ?>
+                                <div>
+                                    🔜 Next backup: <strong><?php echo date('Y-m-d H:i:s', $next_scheduled); ?></strong>
+                                    <span style="color:#666;">(in <?php echo human_time_diff(current_time('timestamp'), $next_scheduled); ?>)</span>
+                                </div>
+                            </div>
+                        </div>
+                    <?php endif; ?>
+
+                    <hr>
+
+                    <h2>Email Notifications</h2>
+                    <table class="form-table" style="margin-top:0;">
+                        <tr>
+                            <th>Enable Notifications</th>
+                            <td>
+                                <label>
+                                    <input type="checkbox" name="notify_enabled" id="notify_enabled" <?php checked(!empty($s['notify_enabled'])); ?>>
+                                    Send email notifications about backups
+                                </label>
+                            </td>
+                        </tr>
+                    </table>
+
+                    <div id="notification_settings" style="<?php echo empty($s['notify_enabled']) ? 'display:none;' : ''; ?>">
+                        <table class="form-table" style="margin-top:0;">
+                            <tr>
+                                <th>Email Address</th>
+                                <td>
+                                    <input type="email" name="notify_email" class="regular-text" value="<?php echo esc_attr($s['notify_email'] ?? ''); ?>" placeholder="<?php echo esc_attr(get_option('admin_email')); ?>">
+                                    <div class="zata-hint">Leave blank to use admin email: <strong><?php echo esc_html(get_option('admin_email')); ?></strong></div>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th>Notify When</th>
+                                <td>
+                                    <div style="display:flex;flex-direction:column;gap:8px;">
+                                        <label>
+                                            <input type="checkbox" name="notify_on_success" <?php checked(!empty($s['notify_on_success'])); ?>>
+                                            Backup succeeds ✓
+                                        </label>
+                                        <label>
+                                            <input type="checkbox" name="notify_on_failure" <?php checked(!empty($s['notify_on_failure'])); ?>>
+                                            Backup fails ✖
+                                        </label>
+                                    </div>
+                                    <div class="zata-hint">Choose when to receive email notifications.</div>
+                                </td>
+                            </tr>
+                        </table>
+
+                        <div style="background:#fff3cd;border-left:4px solid #ffc107;padding:12px;margin-top:10px;">
+                            <strong>📧 Notifications Active</strong><br>
+                            <div style="margin-top:6px;font-size:13px;">
+                                Recipient: <strong><?php echo esc_html(!empty($s['notify_email']) ? $s['notify_email'] : get_option('admin_email')); ?></strong>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </form>
+
+        <!-- Separate forms for Test and Backup -->
+        <div class="zata-layout" style="margin-top:20px;">
+            <div class="zata-card">
+                <h2 style="margin-top:0;">Connection</h2>
+                <div style="margin:6px 0 10px;">
+                    <?php if ($remote_configured): ?>
+                        <?php if ($test['ok']): ?>
+                            <span class="zata-badge ok">Test: OK</span>
+                        <?php else: ?>
+                            <span class="zata-badge bad">Test: Required</span>
+                        <?php endif; ?>
+                        <span class="zata-hint" style="display:block;margin-top:6px;">
+                            Test verifies <strong>read/write/delete</strong> on the bucket.
+                        </span>
+                    <?php else: ?>
+                        <span class="zata-badge">Remote: Not configured</span>
+                        <span class="zata-hint" style="display:block;margin-top:6px;">
+                            Configure endpoint/bucket/keys to enable remote upload and testing.
+                        </span>
+                    <?php endif; ?>
+                </div>
+
+                <div class="zata-actions">
+                    <form method="post" style="margin:0;">
+                        <?php wp_nonce_field('zata_wps3b_test', 'zata_wps3b_test_nonce'); ?>
+                        <button type="submit" class="button button-secondary" name="zata_wps3b_test" value="1" <?php disabled(!$remote_configured); ?>>
+                            Test Connection
+                        </button>
+                    </form>
+
+                    <form method="post" style="margin:0;">
+                        <?php wp_nonce_field('zata_wps3b_run', 'zata_wps3b_run_nonce'); ?>
+                        <button type="submit" class="button button-primary" name="zata_wps3b_run" value="1" <?php disabled($run_disabled); ?>>
+                            Start Backup
+                        </button>
+                    </form>
+                </div>
+
+                <?php if ($run_disabled): ?>
+                    <div class="zata-hint" style="margin-top:8px;">
+                        Please run <strong>Test Connection</strong> before starting backup (remote is configured).
+                    </div>
+                <?php endif; ?>
+            </div>
         </div>
 
-        <div class="wps3b-card">
-          <h2>Email Notifications</h2>
-          <table class="form-table">
-            <tr>
-              <th>Enable <?php echo wps3b_info_icon('Send email on failure. Optional: send on success too.'); ?></th>
-              <td>
-                <label><input type="checkbox" name="<?php echo esc_attr(WPS3B_OPT); ?>[notify_enabled]" value="1" <?php checked(!empty($opt['notify_enabled'])); ?> />
-                  Send email on backup result</label><br>
-                <label><input type="checkbox" name="<?php echo esc_attr(WPS3B_OPT); ?>[notify_on_success]" value="1" <?php checked(!empty($opt['notify_on_success'])); ?> />
-                  Also notify on success</label>
-              </td>
-            </tr>
-            <tr>
-              <th>Notify email <?php echo wps3b_info_icon('Default is WordPress admin email.'); ?></th>
-              <td><input type="email" class="regular-text" name="<?php echo esc_attr(WPS3B_OPT); ?>[notify_email]" value="<?php echo esc_attr($opt['notify_email'] ?? get_option('admin_email')); ?>" /></td>
-            </tr>
-          </table>
-        </div>
-      </div>
+        <hr>
+        <h2>Logs</h2>
+        <div class="zata-mono"><?php echo esc_html($log); ?></div>
 
-      <?php submit_button('Save Settings'); ?>
-    </form>
+        <script>
+            (function(){
+                const zataRadio = document.getElementById('prov_zata');
+                const endpoint  = document.getElementById('zata_endpoint');
+                const protocol  = document.getElementById('zata_protocol');
 
-    <div class="wps3b-actions">
-      <a class="button button-primary" href="<?php echo esc_url(wp_nonce_url(admin_url('admin-post.php?action=wps3b_run_now'), 'wps3b_run_now')); ?>">
-        Run Backup Now
-      </a>
-      <a class="button" href="<?php echo esc_url(add_query_arg(['page'=>WPS3B_SLUG,'tab'=>'logs'], admin_url('admin.php'))); ?>">
-        View Logs
-      </a>
+                function applyPreset(){
+                    if (zataRadio && zataRadio.checked){
+                        if (!endpoint.value) endpoint.value = 'idr01.zata.ai';
+                        if (!protocol.value) protocol.value = 'https';
+                    }
+                }
+                if (zataRadio) zataRadio.addEventListener('change', applyPreset);
+                applyPreset();
+
+                // Show/hide backup time based on schedule selection
+                const scheduleSelect = document.getElementById('backup_schedule');
+                const timeRow = document.getElementById('backup_time_row');
+                
+                if (scheduleSelect && timeRow) {
+                    scheduleSelect.addEventListener('change', function() {
+                        if (this.value === 'daily') {
+                            timeRow.style.display = '';
+                        } else {
+                            timeRow.style.display = 'none';
+                        }
+                    });
+                }
+
+                // Show/hide notification settings based on checkbox
+                const notifyCheckbox = document.getElementById('notify_enabled');
+                const notifySettings = document.getElementById('notification_settings');
+                
+                if (notifyCheckbox && notifySettings) {
+                    notifyCheckbox.addEventListener('change', function() {
+                        if (this.checked) {
+                            notifySettings.style.display = '';
+                        } else {
+                            notifySettings.style.display = 'none';
+                        }
+                    });
+                }
+            })();
+        </script>
     </div>
-  </div>
-  <?php
-}
-
-function wps3b_render_logs_tab() {
-  if (!current_user_can('manage_options')) return;
-
-  $hist = get_option(WPS3B_HISTORY_OPT, []);
-  $hist = is_array($hist) ? $hist : [];
-
-  $log_path = function_exists('wps3b_log_file') ? wps3b_log_file() : '';
-  $log_exists = $log_path && file_exists($log_path);
-  ?>
-  <div class="wps3b-card">
-    <h2>Backup History</h2>
-
-    <div class="wps3b-log-actions">
-      <a class="button button-primary" href="<?php echo esc_url(wp_nonce_url(admin_url('admin-post.php?action=wps3b_run_now'), 'wps3b_run_now')); ?>">Run Backup Now</a>
-      <?php if ($log_exists): ?>
-        <a class="button" href="<?php echo esc_url(wp_nonce_url(admin_url('admin-post.php?action=wps3b_download_log'), 'wps3b_download_log')); ?>">Download Log</a>
-      <?php endif; ?>
-      <a class="button button-secondary" href="<?php echo esc_url(wp_nonce_url(admin_url('admin-post.php?action=wps3b_clear_log'), 'wps3b_clear_log')); ?>"
-         onclick="return confirm('Clear history and delete log file?');">Clear Logs</a>
-    </div>
-
-    <?php if (empty($hist)): ?>
-      <p class="description">No runs yet. Click “Run Backup Now”.</p>
-    <?php else: ?>
-      <table class="widefat striped">
-        <thead>
-          <tr>
-            <th>Time</th>
-            <th>Status</th>
-            <th>Duration</th>
-            <th>Uploaded</th>
-            <th>Message</th>
-          </tr>
-        </thead>
-        <tbody>
-          <?php foreach ($hist as $row): ?>
-            <tr>
-              <td><?php echo esc_html(date_i18n('Y-m-d H:i:s', (int)($row['time'] ?? time()))); ?></td>
-              <td>
-                <span class="wps3b-badge <?php echo ($row['status'] ?? '') === 'SUCCESS' ? 'ok' : 'bad'; ?>">
-                  <?php echo esc_html($row['status'] ?? ''); ?>
-                </span>
-              </td>
-              <td><?php echo esc_html((int)($row['duration_sec'] ?? 0) . 's'); ?></td>
-              <td>
-                <?php
-                  $keys = $row['uploaded_keys'] ?? [];
-                  if (is_array($keys) && count($keys)) {
-                    echo '<code>' . esc_html(implode(", ", $keys)) . '</code>';
-                  } else {
-                    echo '-';
-                  }
-                ?>
-              </td>
-              <td><?php echo esc_html($row['message'] ?? ''); ?></td>
-            </tr>
-          <?php endforeach; ?>
-        </tbody>
-      </table>
-    <?php endif; ?>
-  </div>
-
-  <div class="wps3b-card">
-    <h2>Latest Log Lines</h2>
     <?php
-      if (!$log_exists) {
-        echo '<p class="description">Log file not created yet. Run a backup to generate logs.</p>';
-        return;
-      }
-
-      $lines = @file($log_path, FILE_IGNORE_NEW_LINES);
-      $lines = is_array($lines) ? $lines : [];
-      $tail = array_slice($lines, -120);
-    ?>
-    <pre class="wps3b-logbox"><?php echo esc_html(implode("\n", $tail)); ?></pre>
-  </div>
-  <?php
 }
