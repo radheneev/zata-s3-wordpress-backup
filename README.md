@@ -121,13 +121,14 @@ Use at your own risk.
 
 ## Screenshots
 ### 1) S3 / ZATA Settings
-![S3 Settings](assets/screenshot/s3-1.png)
+![S3 Settings](wp-s3-backup/assets/screenshot/s3-1.png)
 ### 2) Schedule Setup
-![Schedule](assets/screenshot/s3-2.png)
+![Schedule](wp-s3-backup/assets/screenshot/s3-2.png)
 ### 3) Notifications
-![Notifications](assets/screenshot/s3-3.png)
+![Notifications](wp-s3-backup/assets/screenshot/s3-3.png)
 ### 4) Backup Run / Logs
-![Backup Run](assets/screenshot/s3-4.png)
+![Backup Run](wp-s3-backup/assets/screenshot/s3-4.png)
+
 
 
 
