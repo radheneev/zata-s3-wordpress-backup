@@ -124,10 +124,8 @@ Use at your own risk.
 ![S3 Settings](wp-s3-backup/assets/screenshot/s3-1.png)
 ### 2) Schedule Setup
 ![Schedule](wp-s3-backup/assets/screenshot/s3-2.png)
-### 3) Notifications
-![Notifications](wp-s3-backup/assets/screenshot/s3-3.png)
-### 4) Backup Run / Logs
-![Backup Run](wp-s3-backup/assets/screenshot/s3-4.png)
+
+
 
 
 
