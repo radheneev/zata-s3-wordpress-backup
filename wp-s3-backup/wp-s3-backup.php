@@ -1,8 +1,8 @@
 <?php
 /**
- * Plugin Name: ZATA S3 WordPress Backup
+ * Plugin Name: ZATA S3 Backup
  * Description: Backup WordPress DB + themes + plugins and upload to ZATA / S3-compatible storage (ZATA default). Includes test connection. No shell_exec.
- * Version: 1.3.0
+ * Version: 1.0.7
  * Author: Radhe D
  * License: MIT
  */
@@ -104,7 +104,7 @@ function zata_wps3b_calculate_next_daily_run($time_string) {
     
     // Get current time in site timezone
     $now = current_time('timestamp');
-    $today = strtotime(date('Y-m-d', $now) . " {$hour}:{$minute}:00");
+    $today = strtotime(gmdate('Y-m-d', $now) . " {$hour}:{$minute}:00");
     
     // If today's time has passed, schedule for tomorrow
     if ($today <= $now) {
@@ -151,7 +151,7 @@ function zata_wps3b_send_notification($success, $log_text, $mode = 'manual') {
     // Prepare subject
     $site_name = get_bloginfo('name');
     $status = $success ? '✓ SUCCESS' : '✖ FAILED';
-    $subject = "[{$site_name}] Backup {$status} - " . date('Y-m-d H:i:s');
+    $subject = "[{$site_name}] Backup {$status} - " . gmdate('Y-m-d H:i:s');
     
     // Prepare message
     $message = "WordPress Backup Report\n";
